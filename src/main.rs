@@ -4,6 +4,7 @@ use bevy::render::mesh::PrimitiveTopology;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bevy_rapier3d::prelude::*;
+use rand::Rng;
 
 fn main() {
     App::new()
@@ -12,11 +13,13 @@ fn main() {
         .add_plugins(RapierDebugRenderPlugin::default())
         .add_systems(Startup, setup_graphics)
         .add_systems(Startup, setup_physics)
+        .add_systems(Startup, setup_ui) // Add the UI setup system
         .add_systems(Startup, start_cursor_toggle_grab)
-        .add_systems(Update, print_ball_altitude)
         .add_systems(Update, move_camera) // Add the camera movement system
         .add_systems(Update, watch_cursor_toggle_grab)
         .add_systems(Update, toggle_debug_render)
+        .add_systems(Update, move_controllable_ball)
+        .add_systems(Update, apply_ball_drag)
         .run();
 }
 
@@ -46,35 +49,39 @@ fn setup_physics(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    /* Create the bouncing ball. */
-    commands.spawn((
-        PbrBundle {
-            mesh: meshes.add(Mesh::from(Sphere { radius: 0.5 })),
-            material: materials.add(StandardMaterial {
-                base_color: Color::srgb(1.0, 1.0, 1.0),
-                ..Default::default()
-            }),
-            transform: Transform::from_xyz(0.0, 0.0, 0.0),
-            ..Default::default()
-        },
-        RigidBody::Dynamic,
-        Collider::ball(0.5),
-        Restitution::coefficient(0.99),
-        Velocity::linear(Vec3::new(20.0, 0.0, 0.0)), // Add initial forward velocity
-        LockedAxes::TRANSLATION_LOCKED_Y,            // Lock translation on the Y axis
-    ));
+    let mut rng = rand::thread_rng();
 
+    // Add a light source
+    // commands.spawn(DirectionalLightBundle {
+    //     directional_light: DirectionalLight {
+    //         color: Color::srgb(1.0, 0.9, 0.9),
+    //         shadows_enabled: true,
+    //         illuminance: 5_000.0, // You can tweak this value for brightness
+    //         ..default()
+    //     },
+    //     transform: Transform {
+    //         rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4), // Set rotation to simulate sunlight angle
+    //         ..default()
+    //     },
+    //     ..default()
+    // });
     // Add a light source
     commands.spawn(PointLightBundle {
         point_light: PointLight {
+            color: Color::srgb(1.0, 0.9, 0.9),
             shadows_enabled: true,
-            intensity: 10_000_000.,
-            range: 100.0,
+            intensity: 60_000_000.,
+            range: 100_000.0,
             shadow_depth_bias: 0.2,
             ..default()
         },
-        transform: Transform::from_xyz(8.0, 16.0, 8.0),
+        transform: Transform::from_xyz(0.0, 30.0, 0.0),
         ..default()
+    });
+
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.3, 0.3, 0.3), // Set a subtle gray color for overall light
+        brightness: 5_000.0, // Adjust brightness to provide a softer base illumination
     });
 
     let tile_size = 1.0;
@@ -84,18 +91,13 @@ fn setup_physics(
     let mesh_handle = create_checkerboard_mesh(&mut meshes, width, length, tile_size);
 
     let colors = [
-        Color::srgba_u8(38, 70, 83, 200),    // Blue
-        Color::srgba_u8(233, 196, 106, 200), // Yellow
-        Color::srgba_u8(42, 157, 143, 200),  // Green
-        Color::srgba_u8(231, 111, 81, 200),  // Red
+        Color::srgba_u8(38, 70, 83, 100),    // Blue
+        Color::srgba_u8(233, 196, 106, 100), // Yellow
+        Color::srgba_u8(42, 157, 143, 100),  // Green
+        Color::srgba_u8(231, 111, 81, 100),  // Red
     ];
     commands
         .spawn((TransformBundle::default(), InheritedVisibility::VISIBLE)) // Parent entity
-        .insert(Collider::cuboid(
-            width as f32 * tile_size,
-            0.1,
-            length as f32 * tile_size,
-        ))
         .with_children(|parent| {
             let total_width: f32 = width as f32 * tile_size;
             let total_length = length as f32 * tile_size;
@@ -123,31 +125,31 @@ fn setup_physics(
                 ..Default::default()
             });
 
-            let wall_height = 10.0; // Example height of the walls
-            let wall_thickness = 0.1; // Thickness of the walls
+            let wall_height = 1.0; // Example height of the walls
+            let wall_thickness = 0.3; // Thickness of the walls
 
             // Define positions and sizes for each wall
             let walls = [
                 (
-                    Transform::from_xyz(0.0, wall_height / 2.0, -total_length - wall_thickness),
+                    Transform::from_xyz(0.0, 0.0, -total_length - wall_thickness),
                     total_width,
                     wall_height,
                     wall_thickness,
                 ), // North wall
                 (
-                    Transform::from_xyz(0.0, wall_height / 2.0, total_length + wall_thickness),
+                    Transform::from_xyz(0.0, 0.0, total_length + wall_thickness),
                     total_width,
                     wall_height,
                     wall_thickness,
                 ), // South wall
                 (
-                    Transform::from_xyz(-total_width - wall_thickness, wall_height / 2.0, 0.0),
+                    Transform::from_xyz(-total_width - wall_thickness, 0.0, 0.0),
                     wall_thickness,
                     wall_height,
                     total_length,
                 ), // West wall
                 (
-                    Transform::from_xyz(total_width + wall_thickness, wall_height / 2.0, 0.0),
+                    Transform::from_xyz(total_width + wall_thickness, 0.0, 0.0),
                     wall_thickness,
                     wall_height,
                     total_length,
@@ -164,9 +166,146 @@ fn setup_physics(
                         transform: *transform,
                         ..Default::default()
                     })
-                    .insert(Collider::cuboid(*width, *height, *depth));
+                    .insert((
+                        Collider::cuboid(*width, *height, *depth),
+                        Restitution::coefficient(1.0),
+                    ));
             }
         });
+
+    // spawn random balls
+    let num_balls = 50;
+    let ball_radius = 0.5;
+    for _ in 0..num_balls {
+        let x_max = width as f32 * tile_size / 2.0 - ball_radius * 2.0;
+        let z_max = length as f32 * tile_size / 2.0 - ball_radius * 2.0;
+        let x_pos = rng.gen_range(-x_max..x_max);
+        let z_pos = rng.gen_range(-z_max..z_max);
+        let x_vel = rng.gen_range(-20.0..20.0);
+        let z_vel = rng.gen_range(-20.0..20.0);
+
+        let position = Vec3::new(x_pos, 0.0, z_pos);
+        let velocity = Vec3::new(0.0, 0.0, 0.0);
+        let class = match rng.gen_range(0..4) {
+            0 => BallClass::Red,
+            1 => BallClass::Blue,
+            2 => BallClass::Green,
+            _ => BallClass::Yellow,
+        };
+
+        Ball::spawn(
+            position,
+            velocity,
+            class,
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+        );
+    }
+
+    ControllableBall::spawn(
+        Vec3::new(0.0, 0.0, 0.0),
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+    );
+}
+
+enum BallClass {
+    Red,
+    Blue,
+    Green,
+    Yellow,
+}
+
+impl BallClass {
+    fn color(&self) -> Color {
+        match self {
+            BallClass::Blue => Color::srgb_u8(38, 70, 83), // Blue
+            BallClass::Yellow => Color::srgb_u8(233, 196, 106), // Yellow
+            BallClass::Green => Color::srgb_u8(42, 157, 143), // Green
+            BallClass::Red => Color::srgb_u8(231, 111, 81), // Red
+        }
+    }
+}
+
+#[derive(Component)]
+struct Ball {
+    drag_coefficient: f32,
+}
+impl Ball {
+    fn spawn(
+        position: Vec3,
+        velocity: Vec3,
+        class: BallClass,
+        commands: &mut Commands,
+        meshes: &mut ResMut<Assets<Mesh>>,
+        materials: &mut ResMut<Assets<StandardMaterial>>,
+    ) {
+        commands.spawn((
+            PbrBundle {
+                mesh: meshes.add(Mesh::from(Sphere { radius: 0.5 })),
+                material: materials.add(StandardMaterial {
+                    base_color: class.color(),
+                    ..Default::default()
+                }),
+                transform: Transform::from_translation(position),
+                ..Default::default()
+            },
+            RigidBody::Dynamic,
+            Collider::ball(0.5),
+            Restitution {
+                coefficient: 0.7,
+                combine_rule: CoefficientCombineRule::Average,
+            },
+            // Friction {
+            //     coefficient: 0.0,
+            //     combine_rule: CoefficientCombineRule::Min,
+            // },
+            Velocity::linear(velocity),
+            LockedAxes::TRANSLATION_LOCKED_Y,
+            Ball {
+                drag_coefficient: 0.01,
+            }, // Add drag to the ball
+        ));
+    }
+}
+
+#[derive(Component)]
+struct ControllableBall {}
+
+impl ControllableBall {
+    fn spawn(
+        position: Vec3,
+        commands: &mut Commands,
+        meshes: &mut ResMut<Assets<Mesh>>,
+        materials: &mut ResMut<Assets<StandardMaterial>>,
+    ) {
+        commands.spawn((
+            PbrBundle {
+                mesh: meshes.add(Mesh::from(Sphere { radius: 1.5 })),
+                material: materials.add(StandardMaterial {
+                    base_color: Color::WHITE,
+                    ..Default::default()
+                }),
+                transform: Transform::from_translation(position),
+                ..Default::default()
+            },
+            Restitution {
+                coefficient: 0.0,
+                combine_rule: CoefficientCombineRule::Min,
+            },
+            Velocity::linear(Vec3::ZERO),
+            RigidBody::Dynamic, // Kinematic so it isn't pushed by others
+            Collider::ball(1.5),
+            LockedAxes::TRANSLATION_LOCKED_Y, // Prevent it from moving in the Y axis
+            Name::new("ControllableBall"),    // Helpful for debugging or identification
+            ControllableBall {}, // Make sure the `ControllableBall` component is included
+            Ball {
+                drag_coefficient: 0.1,
+            }, // Add drag to the ball
+        ));
+    }
 }
 
 fn create_checkerboard_mesh(
@@ -233,11 +372,55 @@ fn create_checkerboard_mesh(
     meshes.add(mesh)
 }
 
-fn print_ball_altitude(mut positions: Query<&mut Transform, With<RigidBody>>) {
-    for mut transform in positions.iter_mut() {
-        // dbg!(transform.rotation.to_axis_angle());
-        transform.rotation = Quat::from_rotation_z(270_f32.to_radians());
-        //println!("Ball altitude: {}", transform.translation.y);
+fn apply_ball_drag(mut query: Query<(&mut Velocity, &Ball), With<Ball>>) {
+    for (mut velocity, ball) in query.iter_mut() {
+        // let drag_coefficient = 0.1; // Adjust as needed
+        let drag_force = -velocity.linvel * ball.drag_coefficient;
+        velocity.linvel += drag_force;
+    }
+}
+
+fn move_controllable_ball(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut query: Query<(&mut Velocity, &mut Transform), With<ControllableBall>>,
+    time: Res<Time>, // To make movement frame rate independent
+) {
+    if let Ok((mut velocity, mut transform)) = query.get_single_mut() {
+        let mut direction = Vec3::ZERO;
+
+        if keyboard_input.pressed(KeyCode::ArrowUp) {
+            direction.z -= 1.0;
+        }
+        if keyboard_input.pressed(KeyCode::ArrowDown) {
+            direction.z += 1.0;
+        }
+        if keyboard_input.pressed(KeyCode::ArrowLeft) {
+            direction.x -= 1.0;
+        }
+        if keyboard_input.pressed(KeyCode::ArrowRight) {
+            direction.x += 1.0;
+        }
+
+        // Normalize to prevent faster diagonal movement and set speed
+        if direction.length_squared() > 0.0 {
+            direction = direction.normalize() * 50000.0 * time.delta_seconds(); // Adjust speed as needed
+        }
+
+        // Apply translation
+        velocity.linvel += direction * time.delta_seconds();
+
+        // clamp velocity
+        // let max_speed = 10.0; // Adjust as needed
+        // if velocity.linvel.length_squared() > max_speed * max_speed {
+        //     velocity.linvel = velocity.linvel.normalize() * max_speed;
+        // }
+
+        // Constrain within walls (example)
+        let x_limit = 24.0; // Adjust based on your wall setup
+        let z_limit = 24.0; // Adjust based on your wall setup
+
+        transform.translation.x = transform.translation.x.clamp(-x_limit, x_limit);
+        transform.translation.z = transform.translation.z.clamp(-z_limit, z_limit);
     }
 }
 
@@ -321,4 +504,48 @@ fn cursor_toggle_grab(mut window: Mut<'_, Window>) {
             window.cursor.visible = true;
         }
     }
+}
+
+fn setup_ui(mut commands: Commands) {
+    // commands.spawn(UiCameraBundle::default());
+
+    commands
+        .spawn(NodeBundle {
+            style: Style {
+                // size: Size::new(Val::Percent(100.0), Val::Percent(100.0)),
+                margin: UiRect::all(Val::Px(25.0)),
+                align_self: AlignSelf::Stretch,
+                justify_self: JustifySelf::Stretch,
+                flex_wrap: FlexWrap::Wrap,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                align_content: AlignContent::Center,
+                ..Default::default()
+            },
+            background_color: Color::NONE.into(),
+            // material: materials.add(Color::NONE.into()),
+            ..Default::default()
+        })
+        .with_children(|parent| {
+            parent.spawn((
+                NodeBundle {
+                    style: Style {
+                        width: Val::Px(10.0),
+                        height: Val::Px(10.0),
+                        // size: Size::new(Val::Px(10.0), Val::Px(10.0)),
+                        // border: Rect::all(Val::Px(1.0)),
+                        ..Default::default()
+                    },
+                    border_radius: BorderRadius::all(Val::Px(5.0)),
+                    // background_color: Color::WHITE.into(),
+                    ..Default::default()
+                },
+                Outline {
+                    width: Val::Px(1.),
+                    offset: Val::Px(1.),
+                    // grey color
+                    color: Color::srgb(0.5, 0.5, 0.5),
+                },
+            ));
+        });
 }
