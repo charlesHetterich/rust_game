@@ -4,23 +4,60 @@ use bevy::render::mesh::PrimitiveTopology;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bevy_rapier3d::prelude::*;
+use nn::ModuleT;
 use rand::Rng;
+use tch::*;
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugins(RapierDebugRenderPlugin::default())
+    let mut app = App::new();
+
+    // Check for a headless mode flag
+    let headless_mode = std::env::args().any(|arg| arg == "--headless");
+
+    if headless_mode {
+        app.add_plugins(MinimalPlugins);
+    } else {
+        app.add_plugins(DefaultPlugins)
+            .add_plugins(RapierDebugRenderPlugin::default());
+    }
+
+    //  plugins
+    app.add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+        // startup systems
         .add_systems(Startup, setup_graphics)
         .add_systems(Startup, setup_physics)
         .add_systems(Startup, setup_ui) // Add the UI setup system
         .add_systems(Startup, start_cursor_toggle_grab)
+        .add_systems(Startup, load_model)
+        // update systems
         .add_systems(Update, move_camera) // Add the camera movement system
         .add_systems(Update, watch_cursor_toggle_grab)
         .add_systems(Update, toggle_debug_render)
-        .add_systems(Update, move_controllable_ball)
+        .add_systems(Update, move_controllable_ball_with_keyboard)
+        // .add_systems(Update, move_controllable_ball_with_ai)
         .add_systems(Update, apply_ball_drag)
         .run();
+}
+
+// Define a resource to store the model
+#[derive(Resource)]
+pub struct ModelResource {
+    model: TrainableCModule,
+    vs: nn::VarStore,
+}
+
+impl ModelResource {
+    pub fn new(model_path: &str) -> Self {
+        let vs = nn::VarStore::new(Device::Cpu);
+        let mut model =
+            TrainableCModule::load(model_path, vs.root()).expect("Failed to load model");
+        model.set_eval();
+        ModelResource { model, vs }
+    }
+}
+fn load_model(mut commands: Commands) {
+    let model_resource = ModelResource::new("src/modeling/ball_policy.pt");
+    commands.insert_resource(model_resource);
 }
 
 fn toggle_debug_render(
@@ -181,8 +218,8 @@ fn setup_physics(
         let z_max = length as f32 * tile_size / 2.0 - ball_radius * 2.0;
         let x_pos = rng.gen_range(-x_max..x_max);
         let z_pos = rng.gen_range(-z_max..z_max);
-        let x_vel = rng.gen_range(-20.0..20.0);
-        let z_vel = rng.gen_range(-20.0..20.0);
+        // let x_vel = rng.gen_range(-20.0..20.0);
+        // let z_vel = rng.gen_range(-20.0..20.0);
 
         let position = Vec3::new(x_pos, 0.0, z_pos);
         let velocity = Vec3::new(0.0, 0.0, 0.0);
@@ -380,49 +417,173 @@ fn apply_ball_drag(mut query: Query<(&mut Velocity, &Ball), With<Ball>>) {
     }
 }
 
-fn move_controllable_ball(
+fn apply_movement(
+    direction_up: bool,
+    direction_down: bool,
+    direction_left: bool,
+    direction_right: bool,
+    velocity: &mut Velocity,
+    time: &Res<Time>,
+) {
+    let mut direction = Vec3::ZERO;
+
+    if direction_up {
+        direction.z -= 1.0;
+    }
+    if direction_down {
+        direction.z += 1.0;
+    }
+    if direction_left {
+        direction.x -= 1.0;
+    }
+    if direction_right {
+        direction.x += 1.0;
+    }
+
+    if direction.length_squared() > 0.0 {
+        direction = direction.normalize() * 250.0;
+    }
+
+    velocity.linvel += direction * time.delta_seconds();
+}
+
+// Function to get movement based on keyboard input
+fn get_keyboard_input(keyboard_input: &Res<ButtonInput<KeyCode>>) -> (bool, bool, bool, bool) {
+    let up = keyboard_input.pressed(KeyCode::ArrowUp);
+    let down = keyboard_input.pressed(KeyCode::ArrowDown);
+    let left = keyboard_input.pressed(KeyCode::ArrowLeft);
+    let right = keyboard_input.pressed(KeyCode::ArrowRight);
+
+    (up, down, left, right)
+}
+
+// Keyboard-based player movement
+fn move_controllable_ball_with_keyboard(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&mut Velocity, &mut Transform), With<ControllableBall>>,
     time: Res<Time>, // To make movement frame rate independent
 ) {
-    if let Ok((mut velocity, mut transform)) = query.get_single_mut() {
-        let mut direction = Vec3::ZERO;
-
-        if keyboard_input.pressed(KeyCode::ArrowUp) {
-            direction.z -= 1.0;
-        }
-        if keyboard_input.pressed(KeyCode::ArrowDown) {
-            direction.z += 1.0;
-        }
-        if keyboard_input.pressed(KeyCode::ArrowLeft) {
-            direction.x -= 1.0;
-        }
-        if keyboard_input.pressed(KeyCode::ArrowRight) {
-            direction.x += 1.0;
-        }
-
-        // Normalize to prevent faster diagonal movement and set speed
-        if direction.length_squared() > 0.0 {
-            direction = direction.normalize() * 50000.0 * time.delta_seconds(); // Adjust speed as needed
-        }
-
-        // Apply translation
-        velocity.linvel += direction * time.delta_seconds();
-
-        // clamp velocity
-        // let max_speed = 10.0; // Adjust as needed
-        // if velocity.linvel.length_squared() > max_speed * max_speed {
-        //     velocity.linvel = velocity.linvel.normalize() * max_speed;
-        // }
-
-        // Constrain within walls (example)
-        let x_limit = 24.0; // Adjust based on your wall setup
-        let z_limit = 24.0; // Adjust based on your wall setup
-
-        transform.translation.x = transform.translation.x.clamp(-x_limit, x_limit);
-        transform.translation.z = transform.translation.z.clamp(-z_limit, z_limit);
+    if let Ok((mut velocity, _)) = query.get_single_mut() {
+        let (up, down, left, right) = get_keyboard_input(&keyboard_input);
+        apply_movement(up, down, left, right, &mut velocity, &time);
     }
 }
+
+// Function to get movement based on AI output
+fn get_ai_movement(model: &TrainableCModule, input: Tensor) -> (bool, bool, bool, bool) {
+    let output = model.forward_t(&input, false);
+    let output = output.sigmoid(); // Apply sigmoid function
+
+    // let up = output.double_value(&[0]) > 0.5;
+    // let down = output.double_value(&[1]) > 0.5;
+    // let left = output.double_value(&[2]) > 0.5;
+    // let right = output.double_value(&[3]) > 0.5;
+
+    // (up, down, left, right)
+
+    // let output = model.forward(&input);
+    // let output = output.sigmoid(); // Apply sigmoid function to convert logits to probabilities
+
+    // Extract the 4 float values (logits) from the tensor
+    let output_values = Vec::<f32>::try_from(
+        output
+            .view([-1])
+            .to_device(Device::Cpu)
+            .to_kind(Kind::Float),
+    )
+    .unwrap();
+    // .vec
+    // .into_vec();
+
+    // The AI model's output will be an array of 4 values
+    let up = output_values[0] > 0.5;
+    let down = output_values[1] > 0.5;
+    let left = output_values[2] > 0.5;
+    let right = output_values[3] > 0.5;
+
+    (up, down, left, right)
+}
+
+// AI-based player movement
+fn move_controllable_ball_with_ai(
+    model_resource: Res<ModelResource>,
+    mut param_set: ParamSet<(
+        Query<(&mut Velocity, &mut Transform), With<ControllableBall>>,
+        Query<(&Velocity, &Transform), With<Ball>>, // To get the state of all balls, excluding ControllableBall
+    )>,
+    time: Res<Time>, // To make movement frame rate independent
+) {
+    // Step 1: Gather the AI input by borrowing from the second query (non-mutably)
+    let mut inputs = Vec::new();
+    {
+        let ball_query = param_set.p1(); // Immutable borrow for reading ball states
+        for (ball_velocity, ball_transform) in ball_query.iter() {
+            inputs.push(ball_velocity.linvel.x);
+            inputs.push(ball_velocity.linvel.z);
+            inputs.push(ball_transform.translation.x);
+            inputs.push(ball_transform.translation.z);
+        }
+    }
+
+    // Step 2: Pass the input to the AI model
+    let input_tensor = Tensor::from_slice(&inputs).view([1, (50 + 1) * 4]); // Adjust for batch size of 1
+    let (up, down, left, right) = get_ai_movement(&model_resource.model, input_tensor);
+
+    // print movement outputs
+    println!(
+        "up: {}, down: {}, left: {}, right: {}",
+        up, down, left, right
+    );
+
+    // Step 3: Apply movement by borrowing the first query mutably
+    if let Ok((mut velocity, _)) = param_set.p0().get_single_mut() {
+        apply_movement(up, down, left, right, &mut velocity, &time);
+    }
+}
+
+// fn move_controllable_ball(
+//     keyboard_input: Res<ButtonInput<KeyCode>>,
+//     mut query: Query<(&mut Velocity, &mut Transform), With<ControllableBall>>,
+//     time: Res<Time>, // To make movement frame rate independent
+// ) {
+//     if let Ok((mut velocity, mut transform)) = query.get_single_mut() {
+//         let mut direction = Vec3::ZERO;
+
+//         if keyboard_input.pressed(KeyCode::ArrowUp) {
+//             direction.z -= 1.0;
+//         }
+//         if keyboard_input.pressed(KeyCode::ArrowDown) {
+//             direction.z += 1.0;
+//         }
+//         if keyboard_input.pressed(KeyCode::ArrowLeft) {
+//             direction.x -= 1.0;
+//         }
+//         if keyboard_input.pressed(KeyCode::ArrowRight) {
+//             direction.x += 1.0;
+//         }
+
+//         // Normalize to prevent faster diagonal movement and set speed
+//         if direction.length_squared() > 0.0 {
+//             direction = direction.normalize() * 50000.0 * time.delta_seconds(); // Adjust speed as needed
+//         }
+
+//         // Apply translation
+//         velocity.linvel += direction * time.delta_seconds();
+
+//         // clamp velocity
+//         // let max_speed = 10.0; // Adjust as needed
+//         // if velocity.linvel.length_squared() > max_speed * max_speed {
+//         //     velocity.linvel = velocity.linvel.normalize() * max_speed;
+//         // }
+
+//         // Constrain within walls (example)
+//         let x_limit = 24.0; // Adjust based on your wall setup
+//         let z_limit = 24.0; // Adjust based on your wall setup
+
+//         transform.translation.x = transform.translation.x.clamp(-x_limit, x_limit);
+//         transform.translation.z = transform.translation.z.clamp(-z_limit, z_limit);
+//     }
+// }
 
 // Camera movement
 #[derive(Component)]
