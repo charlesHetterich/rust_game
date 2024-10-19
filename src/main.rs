@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use bevy::app::ScheduleRunnerPlugin;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::render::mesh::PrimitiveTopology;
@@ -6,37 +9,85 @@ use bevy::window::{CursorGrabMode, PrimaryWindow};
 use bevy_rapier3d::prelude::*;
 use nn::ModuleT;
 use rand::Rng;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use tch::*;
 
 fn main() {
     let mut app = App::new();
-
-    // Check for a headless mode flag
-    let headless_mode = std::env::args().any(|arg| arg == "--headless");
-
-    if headless_mode {
-        app.add_plugins(MinimalPlugins);
-    } else {
-        app.add_plugins(DefaultPlugins)
-            .add_plugins(RapierDebugRenderPlugin::default());
-    }
-
     //  plugins
-    app.add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+    app.add_plugins(DefaultPlugins)
+        .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
+            1.0 / 60.0,
+        )))
+        .add_plugins(RapierDebugRenderPlugin::default())
+        .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+        // add resources
+        .insert_resource(AggBallPositions::default())
         // startup systems
+        .add_systems(Startup, general_setup)
         .add_systems(Startup, setup_graphics)
         .add_systems(Startup, setup_physics)
         .add_systems(Startup, setup_ui) // Add the UI setup system
         .add_systems(Startup, start_cursor_toggle_grab)
         .add_systems(Startup, load_model)
         // update systems
-        .add_systems(Update, move_camera) // Add the camera movement system
+        .add_systems(Update, handle_move_camera) // Add the camera movement system
         .add_systems(Update, watch_cursor_toggle_grab)
         .add_systems(Update, toggle_debug_render)
-        .add_systems(Update, move_controllable_ball_with_keyboard)
-        // .add_systems(Update, move_controllable_ball_with_ai)
+        // .add_systems(Update, move_controllable_ball_with_keyboard)
+        .add_systems(Update, move_controllable_ball_with_ai)
         .add_systems(Update, apply_ball_drag)
+        .add_systems(Update, track_ball_positions)
+        .add_systems(Update, check_simulation_end)
         .run();
+}
+
+#[derive(Resource)]
+struct SimulationTimer {
+    timer: Timer,
+}
+
+#[derive(Resource, Default)]
+struct AggBallPositions {
+    positions: std::collections::HashMap<Entity, Vec<(f32, f32)>>,
+}
+impl AggBallPositions {
+    pub fn save_to_file(
+        &self,
+        file_path: &str,
+        ball_classes: &Query<&Ball>,
+    ) -> std::io::Result<()> {
+        let file = File::create(file_path)?;
+        let mut writer = BufWriter::new(file);
+
+        for (entity, positions) in &self.positions {
+            if let Ok(ball) = ball_classes.get(*entity) {
+                writeln!(writer, "Class: {:?}", ball.class)?;
+                for (x, z) in positions {
+                    writeln!(writer, "{},{}", x, z)?;
+                }
+                writeln!(writer, "---")?; // Separator between balls
+            }
+        }
+
+        writer.flush()?;
+        Ok(())
+    }
+}
+
+fn track_ball_positions(
+    mut ball_positions: ResMut<AggBallPositions>,
+    query: Query<(Entity, &Transform), With<Ball>>,
+) {
+    for (entity, transform) in query.iter() {
+        let position = (transform.translation.x, transform.translation.z);
+        ball_positions
+            .positions
+            .entry(entity)
+            .or_insert_with(Vec::new)
+            .push(position);
+    }
 }
 
 // Define a resource to store the model
@@ -60,6 +111,16 @@ fn load_model(mut commands: Commands) {
     commands.insert_resource(model_resource);
 }
 
+// fn simulation_step(
+//     mut commands: Commands,
+//     time: ResMut<CustomTime>,
+//     mut rapier_context: ResMut<RapierPhysicsContext>,
+// ) {
+//     let time_step = 1.0 / 60.0; // 60 Hz, or adjust for higher resolution
+//     time.advance(time_step);
+//     rapier_context.step(time_step);
+// }
+
 fn toggle_debug_render(
     // mut commands: Commands,
     keyboard_input: Res<ButtonInput<KeyCode>>,
@@ -70,11 +131,43 @@ fn toggle_debug_render(
     }
 }
 
+fn check_simulation_end(
+    mut writer: EventWriter<AppExit>,
+    time: Res<Time>,
+    mut simulation_timer: ResMut<SimulationTimer>,
+    ball_positions: Res<AggBallPositions>,
+    ball_query: Query<&Ball>,
+) {
+    // Update the timer with the elapsed time
+    if simulation_timer.timer.tick(time.delta()).finished() {
+        // Save the ball positions to a file
+        let save_result = ball_positions.save_to_file("ball_positions.txt", &ball_query);
+
+        match save_result {
+            Ok(_) => println!("Ball positions saved successfully."),
+            Err(e) => eprintln!("Failed to save ball positions: {}", e),
+        }
+
+        // Exit the app by sending an exit event
+        writer.send(AppExit::Success);
+    }
+}
+
+fn general_setup(mut commands: Commands) {
+    // TODO : add a bunch of the other more basic setup stuff here
+
+    // Add 10s game timer
+    commands.insert_resource(SimulationTimer {
+        timer: Timer::from_seconds(1.0, TimerMode::Once),
+    });
+}
+
 fn setup_graphics(mut commands: Commands) {
     // Add a camera so we can see the debug-render.
     commands.spawn((
         Camera3dBundle {
-            transform: Transform::from_xyz(-3.0, 3.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+            transform: Transform::from_xyz(0.0, 50.0, 40.0)
+                .looking_at(Vec3::new(0.0, 0., 5.0), Vec3::Y),
             ..Default::default()
         },
         CameraController,
@@ -248,11 +341,13 @@ fn setup_physics(
     );
 }
 
+#[derive(Debug)]
 enum BallClass {
     Red,
     Blue,
     Green,
     Yellow,
+    Player,
 }
 
 impl BallClass {
@@ -262,6 +357,7 @@ impl BallClass {
             BallClass::Yellow => Color::srgb_u8(233, 196, 106), // Yellow
             BallClass::Green => Color::srgb_u8(42, 157, 143), // Green
             BallClass::Red => Color::srgb_u8(231, 111, 81), // Red
+            BallClass::Player => Color::WHITE,
         }
     }
 }
@@ -269,6 +365,7 @@ impl BallClass {
 #[derive(Component)]
 struct Ball {
     drag_coefficient: f32,
+    class: BallClass,
 }
 impl Ball {
     fn spawn(
@@ -303,6 +400,7 @@ impl Ball {
             LockedAxes::TRANSLATION_LOCKED_Y,
             Ball {
                 drag_coefficient: 0.01,
+                class,
             }, // Add drag to the ball
         ));
     }
@@ -340,6 +438,7 @@ impl ControllableBall {
             ControllableBall {}, // Make sure the `ControllableBall` component is included
             Ball {
                 drag_coefficient: 0.1,
+                class: BallClass::Player,
             }, // Add drag to the ball
         ));
     }
@@ -536,7 +635,8 @@ fn move_controllable_ball_with_ai(
     );
 
     // Step 3: Apply movement by borrowing the first query mutably
-    if let Ok((mut velocity, _)) = param_set.p0().get_single_mut() {
+    if let Ok((mut velocity, transform)) = param_set.p0().get_single_mut() {
+        println!("{:?}", transform.translation.x);
         apply_movement(up, down, left, right, &mut velocity, &time);
     }
 }
@@ -589,7 +689,7 @@ fn move_controllable_ball_with_ai(
 #[derive(Component)]
 struct CameraController;
 
-fn move_camera(
+fn handle_move_camera(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut query: Query<&mut Transform, With<CameraController>>,
@@ -599,7 +699,14 @@ fn move_camera(
     if primary_window.cursor.grab_mode == CursorGrabMode::None {
         return;
     }
+    move_camera(keyboard_input, mouse_motion_events, query);
+}
 
+fn move_camera(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut mouse_motion_events: EventReader<MouseMotion>,
+    mut query: Query<&mut Transform, With<CameraController>>,
+) {
     for mut transform in query.iter_mut() {
         // Handle keyboard input for movement
         let forward = Vec3::new(transform.forward().x, 0.0, transform.forward().z).normalize();
