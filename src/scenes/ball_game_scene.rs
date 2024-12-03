@@ -4,7 +4,7 @@ use bevy::render::render_asset::RenderAssetUsages;
 use bevy_rapier3d::prelude::*;
 use rand::Rng;
 
-use super::super::objects::*;
+use crate::features::ball::*;
 
 fn create_checkerboard_mesh(
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -193,8 +193,6 @@ pub fn setup_scene(
         let z_max = length as f32 * tile_size / 2.0 - ball_radius * 2.0;
         let x_pos = rng.gen_range(-x_max..x_max);
         let z_pos = rng.gen_range(-z_max..z_max);
-        // let x_vel = rng.gen_range(-20.0..20.0);
-        // let z_vel = rng.gen_range(-20.0..20.0);
 
         let position = Vec3::new(x_pos, 0.0, z_pos);
         let velocity = Vec3::new(0.0, 0.0, 0.0);
@@ -231,7 +229,6 @@ pub fn reset_scene(
     )>,
 ) {
     let mut rng = rand::thread_rng();
-    // let ball_radius = 0.5;
     let width = 25.0; // Assuming the width of the area
     let length = 25.0; // Assuming the length of the area
 

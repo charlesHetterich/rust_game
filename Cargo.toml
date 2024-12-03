@@ -21,7 +21,7 @@ opt-level = 3
 
 [[bin]]
 name = "test"
-path = "src/test_headless.rs"
+path = "src/test.rs"
 [[bin]]
 name = "main"
 path = "src/main.rs"

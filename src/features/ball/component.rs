@@ -60,7 +60,7 @@ impl Ball {
                 LockedAxes::TRANSLATION_LOCKED_Y,
                 // Other
                 Ball {
-                    drag_coefficient: if tag == BallTag::Player { 0.01 } else { 0.1 },
+                    drag_coefficient: if tag == BallTag::Player { 0.1 } else { 0.01 },
                     class: tag,
                 },
             ))
