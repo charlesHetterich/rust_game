@@ -32,3 +32,17 @@ cargo run --bin main
 to use flags run the startup command `cargo run --bin main -- --<flag-1> --<flag-2>`
 - `--headless` : runs game with no window if passed
 - `--ai-control` : specify weather a human or ai is playing
+
+### AI Model
+to build the ai model architecture run `python model_arc.py` from the directory `src/modeling`
+
+## Devlog
+Here is getting the basic bevy scene set up with a court full of balls bouncing around
+![Demo](./assets/progvid1.gif)
+
+I've got the core functionality of the game set up here with a player ball meant to sort the colored balls into their respective quadrants
+![Demo](./assets/progvid2.gif)
+
+Now we have the (untrainedc) AI model controling the player ball over several episodes
+![Demo](./assets/progvid3.gif)
+
