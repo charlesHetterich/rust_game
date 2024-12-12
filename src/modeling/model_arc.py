@@ -35,7 +35,14 @@ class MLP(nn.Module):
         return self.net(x)
 
 class BallPolicy(nn.Module):
-    def __init__(self, n_balls: int, nb_features: int, n_actions: int, n_layers: int = 2, mlp_ratio: float = 4):
+    def get_state_dims(n_balls: int):
+        """
+        Calculates the # of features
+        n_balls: the number of balls in the game (excluding player ball)
+        """
+        return n_balls * 6 + 4
+
+    def __init__(self, n_balls: int, n_actions: int, n_layers: int = 2, mlp_ratio: float = 4):
         """
         n_balls: the number of balls in the game (excluding player ball)
         nb_features: the number of features for each ball
@@ -43,7 +50,7 @@ class BallPolicy(nn.Module):
         mlp_ratio: the ratio of hidden layer size to state space dimensions
         """
         super().__init__()
-        state_dims = (n_balls + 1) * nb_features
+        state_dims = BallPolicy.get_state_dims(n_balls)
         hidden_size = int(state_dims*mlp_ratio)
         self.pi = nn.Sequential(
             # MLP([state_dims, hidden_size, hidden_size, n_actions]),
@@ -91,6 +98,6 @@ class BallPolicy(nn.Module):
 
 # build model into jit when this file is run
 if __name__ == "__main__":
-    model = BallPolicy(n_balls=50, nb_features=4, n_actions=4, n_layers=40)
+    model = BallPolicy(n_balls=50, n_actions=4, n_layers=5)
     model = torch.jit.script(model)
     torch.jit.save(model, "ball_policy.pt")

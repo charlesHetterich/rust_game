@@ -1,27 +1,23 @@
 use std::env;
 use std::time::Duration;
 
+use balltrainer::util::events::SimulationEndedEvent;
+use balltrainer::util::playdata::on_simulation_end;
+use balltrainer::util::resources::update_world_state;
+use balltrainer::util::resources::WorldState;
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-// local modules
-mod features;
-mod modeling;
-mod scenes;
-mod util;
-
-use crate::features::ball::*;
-use crate::features::player_controllers::*;
-use crate::features::system::*;
-use crate::features::ui::*;
-
-use crate::util::logging::*;
-use crate::util::playdata::check_simulation_end;
-use crate::util::resources::{ProgramInputs, SimulationTimer};
-
-use crate::modeling::load_model;
-
+use balltrainer::features::ball::*;
+use balltrainer::features::player_controllers::*;
+use balltrainer::features::system::*;
+use balltrainer::features::ui::*;
+use balltrainer::modeling::load_model;
+use balltrainer::scenes::BallGameScene;
+use balltrainer::util::logging::*;
+use balltrainer::util::playdata::check_simulation_end;
+use balltrainer::util::resources::{ProgramInputs, SimulationTimer};
 fn main() {
     // capture program inputs
     let args: Vec<String> = env::args().collect();
@@ -34,19 +30,24 @@ fn main() {
     app.add_plugins(DefaultPlugins)
         .add_plugins(RapierDebugRenderPlugin::default())
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+        //add events
+        .add_event::<SimulationEndedEvent>()
         // add resources
+        .insert_resource(WorldState::new())
         .insert_resource(SimulationTimer {
             timer: Timer::from_seconds(5.0, TimerMode::Repeating),
         })
         // startup systems
         .add_systems(Startup, setup_graphics)
-        .add_systems(Startup, scenes::BallGameScene::setup_scene)
+        .add_systems(Startup, BallGameScene::setup_scene)
         .add_systems(Startup, setup_ui)
         .add_systems(Startup, start_cursor_toggle_grab)
         .add_systems(Startup, load_model)
         // update systems
         .add_systems(Update, apply_ball_drag)
-        .add_systems(Update, check_simulation_end);
+        .add_systems(Update, check_simulation_end)
+        .add_systems(Update, on_simulation_end)
+        .add_systems(Update, update_world_state);
 
     // headless setup
     if (&program_inputs).headless {

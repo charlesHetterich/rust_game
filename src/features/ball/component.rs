@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum BallTag {
     Red,
     Blue,
@@ -18,6 +18,16 @@ impl BallTag {
             BallTag::Green => Color::srgb_u8(42, 157, 143),   // Green
             BallTag::Red => Color::srgb_u8(231, 111, 81),     // Red
             BallTag::Player => Color::WHITE,
+        }
+    }
+
+    pub fn target_quadrant(&self) -> Option<(i8, i8)> {
+        match self {
+            BallTag::Blue => Some((-1, -1)),
+            BallTag::Yellow => Some((1, -1)),
+            BallTag::Green => Some((-1, 1)),
+            BallTag::Red => Some((1, 1)),
+            BallTag::Player => None,
         }
     }
 }
@@ -67,6 +77,17 @@ impl Ball {
             .id();
 
         entity
+    }
+
+    /// Determines if a ball is the the quadrant
+    /// associated with its class
+    pub fn correct_quadrant(&self, x: f32, z: f32) -> bool {
+        if self.class == BallTag::Player {
+            false
+        } else {
+            let (t_x, t_z) = self.class.target_quadrant().unwrap();
+            x * t_x as f32 > 0. && z * t_z as f32 > 0.
+        }
     }
 }
 

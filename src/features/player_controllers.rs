@@ -5,18 +5,19 @@ use tch::*;
 
 use crate::features::ball::*;
 use crate::modeling::ModelResource;
+use crate::util::playdata::collect_ai_input;
 
 /// Collects model input
-fn collect_ai_input(ball_query: Query<(&Velocity, &Transform), With<Ball>>) -> Tensor {
-    let mut inputs = Vec::new();
-    for (ball_velocity, ball_transform) in ball_query.iter() {
-        inputs.push(ball_velocity.linvel.x);
-        inputs.push(ball_velocity.linvel.z);
-        inputs.push(ball_transform.translation.x);
-        inputs.push(ball_transform.translation.z);
-    }
-    Tensor::from_slice(&inputs).view([1, (50 + 1) * 4])
-}
+// fn collect_ai_input(ball_query: Query<(&Velocity, &Transform), With<Ball>>) -> Tensor {
+//     let mut inputs = Vec::new();
+//     for (ball_velocity, ball_transform) in ball_query.iter() {
+//         inputs.push(ball_velocity.linvel.x);
+//         inputs.push(ball_velocity.linvel.z);
+//         inputs.push(ball_transform.translation.x);
+//         inputs.push(ball_transform.translation.z);
+//     }
+//     Tensor::from_slice(&inputs).view([1, (50 + 1) * 4])
+// }
 
 /// Human player input
 fn get_keyboard_input(keyboard_input: &Res<ButtonInput<KeyCode>>) -> (bool, bool, bool, bool) {
@@ -24,7 +25,6 @@ fn get_keyboard_input(keyboard_input: &Res<ButtonInput<KeyCode>>) -> (bool, bool
     let down = keyboard_input.pressed(KeyCode::ArrowDown);
     let left = keyboard_input.pressed(KeyCode::ArrowLeft);
     let right = keyboard_input.pressed(KeyCode::ArrowRight);
-
     (up, down, left, right)
 }
 
@@ -91,12 +91,14 @@ pub fn move_player_w_ai(
     model_resource: Res<ModelResource>,
     mut ball_pset: ParamSet<(
         Query<&mut Velocity, With<ControllableBall>>,
-        Query<(&Velocity, &Transform), With<Ball>>,
+        Query<(&Velocity, &Transform, &Ball), With<Ball>>,
     )>,
 ) {
     // Collect input
-    let (up, down, left, right) =
-        get_ai_movement(&model_resource.model, collect_ai_input(ball_pset.p1()));
+    let (up, down, left, right) = get_ai_movement(
+        &model_resource.model,
+        collect_ai_input(ball_pset.p1().iter().collect()),
+    );
     if let Ok(mut velocity) = ball_pset.p0().get_single_mut() {
         apply_movement(up, down, left, right, &mut velocity, &time);
     }

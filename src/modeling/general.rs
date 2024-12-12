@@ -1,13 +1,23 @@
 use bevy::prelude::*;
 use tch::*;
 
-// Define a resource to store the model
+#[derive(Component)]
+pub struct Trajectory {
+    // pub steps: Vec<(Tensor, f32, f32)>,
+    pub state: Vec<Tensor>,
+    pub action: Vec<f32>,
+    pub reward: Vec<f32>,
+}
+
+// * i think we do `unsafe` thing bc
+// * tensors are C and not rust compliant ?
+unsafe impl Sync for Trajectory {}
+
 #[derive(Resource)]
 pub struct ModelResource {
     pub model: TrainableCModule,
     pub _vs: nn::VarStore,
 }
-
 impl ModelResource {
     pub fn new(model_path: &str) -> Self {
         let vs = nn::VarStore::new(Device::Cpu);

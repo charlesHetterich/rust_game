@@ -5,6 +5,15 @@ use bevy_rapier3d::prelude::*;
 use rand::Rng;
 
 use crate::features::ball::*;
+use crate::modeling::Trajectory;
+
+/// manages data collection of each game
+/// * in prog *
+struct BallGameInstance {
+    trajectory: Trajectory,
+    balls: Vec<Ball>,
+    player: ControllableBall,
+}
 
 fn create_checkerboard_mesh(
     meshes: &mut ResMut<Assets<Mesh>>,

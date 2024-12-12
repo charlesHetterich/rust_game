@@ -1,0 +1,6 @@
+{
+  "rust-analyzer.server.extraEnv": {
+    "LIBTORCH": "${workspaceFolder}/libtorch",
+    "LIBTORCH_BYPASS_VERSION_CHECK": "1"
+  },
+}
