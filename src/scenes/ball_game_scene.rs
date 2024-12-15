@@ -1,115 +1,80 @@
 use bevy::prelude::*;
-use bevy::render::mesh::PrimitiveTopology;
-use bevy::render::render_asset::RenderAssetUsages;
 use bevy_rapier3d::prelude::*;
 use rand::Rng;
 
 use crate::features::ball::*;
+use crate::features::player_controllers::ControllerType;
 use crate::modeling::Trajectory;
 
+use super::general;
+
 /// manages data collection of each game
-/// * in prog *
-struct BallGameInstance {
-    trajectory: Trajectory,
-    balls: Vec<Ball>,
-    player: ControllableBall,
+#[derive(Component)]
+pub struct BallGameScene {
+    pub trajectory: Trajectory,
+    pub game_balls: Vec<Entity>,
+    pub player_ball: Entity,
+    pub controller: ControllerType,
 }
 
-fn create_checkerboard_mesh(
-    meshes: &mut ResMut<Assets<Mesh>>,
-    width: usize,
-    length: usize,
-    tile_size: f32,
-) -> Handle<Mesh> {
-    let half_width = (width as f32 * tile_size) / 2.0;
-    let half_length = (length as f32 * tile_size) / 2.0;
-
-    let mut positions = Vec::new();
-    let mut indices = Vec::new();
-    let mut normals = Vec::new();
-    let mut colors = Vec::new();
-
-    for x in 0..width {
-        for z in 0..length {
-            let x_pos = x as f32 * tile_size - half_width;
-            let z_pos = z as f32 * tile_size - half_length;
-            let base_index = (x * length + z) as u32 * 4;
-
-            positions.extend_from_slice(&[
-                [x_pos, 0.0, z_pos],                         // Bottom left
-                [x_pos + tile_size, 0.0, z_pos],             // Bottom right
-                [x_pos + tile_size, 0.0, z_pos + tile_size], // Top right
-                [x_pos, 0.0, z_pos + tile_size],             // Top left
-            ]);
-
-            normals.extend_from_slice(&[
-                [0.0, 1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 1.0, 0.0],
-            ]);
-
-            indices.extend_from_slice(&[
-                base_index,
-                base_index + 1,
-                base_index + 2,
-                base_index,
-                base_index + 2,
-                base_index + 3,
-            ]);
-
-            let color = if (x + z) % 2 == 0 {
-                [1.0, 1.0, 1.0, 1.0]
-            } else {
-                [0.8, 0.8, 0.8, 1.0]
-            };
-            colors.extend_from_slice(&[color, color, color, color]);
-        }
-    }
-
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
-
-    meshes.add(mesh)
-}
-
-pub fn setup_scene(
+/// Creates a set of ball game scenes
+pub fn setup_world(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let mut rng = rand::thread_rng();
+    // create stages
+    let grid_size = 6;
+    for i in 0..grid_size {
+        for j in 0..grid_size {
+            let x = (i as f32 - grid_size as f32 / 2.0) * 60.0;
+            let z = (j as f32 - grid_size as f32 / 2.0) * 60.0;
+            setup_scene(
+                &mut commands,
+                Vec3::new(x, 0.0, z),
+                &mut materials,
+                &mut meshes,
+            );
+        }
+    }
 
-    // Add a light source
-    commands.spawn(PointLightBundle {
-        point_light: PointLight {
-            color: Color::srgb(1.0, 0.9, 0.9),
-            shadows_enabled: true,
-            intensity: 60_000_000.,
-            range: 100_000.0,
-            shadow_depth_bias: 0.2,
-            ..default()
-        },
-        transform: Transform::from_xyz(0.0, 30.0, 0.0),
-        ..default()
-    });
-
+    // add light
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.3, 0.3, 0.3), // Set a subtle gray color for overall light
-        brightness: 5_000.0, // Adjust brightness to provide a softer base illumination
+        color: Color::srgb(0.3, 0.3, 0.3),
+        brightness: 25_000.0,
     });
+}
 
+fn setup_scene(
+    commands: &mut Commands,
+    center: Vec3, // Add this parameter
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+) {
+    let parent_entity = commands
+        .spawn((
+            Transform::from_translation(center),
+            GlobalTransform::IDENTITY,
+        ))
+        .id();
+
+    let mut scene = None;
+    commands.entity(parent_entity).with_children(|parent| {
+        scene = Some(_setup_scene(parent, materials, meshes));
+    });
+    commands.entity(parent_entity).insert(scene.unwrap());
+}
+
+fn _setup_scene(
+    parent: &mut ChildBuilder,
+    mut materials: &mut ResMut<Assets<StandardMaterial>>,
+    mut meshes: &mut ResMut<Assets<Mesh>>,
+) -> BallGameScene {
     let tile_size = 1.0;
     let width = 25; // Number of tiles along the width
     let length = 25; // Number of tiles along the length
 
-    let mesh_handle = create_checkerboard_mesh(&mut meshes, width, length, tile_size);
+    let mesh_handle = general::create_checkerboard_mesh(meshes, width, length, tile_size);
 
     let colors = [
         Color::srgba_u8(38, 70, 83, 100),    // Blue
@@ -117,7 +82,7 @@ pub fn setup_scene(
         Color::srgba_u8(42, 157, 143, 100),  // Green
         Color::srgba_u8(231, 111, 81, 100),  // Red
     ];
-    commands
+    parent
         .spawn((TransformBundle::default(), InheritedVisibility::VISIBLE)) // Parent entity
         .with_children(|parent| {
             let total_width: f32 = width as f32 * tile_size;
@@ -195,6 +160,8 @@ pub fn setup_scene(
         });
 
     // spawn random balls
+    let mut rng = rand::thread_rng();
+    let mut game_balls = Vec::new();
     let num_balls = 50;
     let ball_radius = 0.5;
     for _ in 0..num_balls {
@@ -212,25 +179,39 @@ pub fn setup_scene(
             _ => BallTag::Yellow,
         };
 
-        Ball::spawn(
-            ball_radius,
-            position,
-            velocity,
-            class,
-            &mut commands,
-            &mut meshes,
-            &mut materials,
+        game_balls.push(
+            Ball::spawn(
+                ball_radius,
+                position,
+                velocity,
+                class,
+                parent,
+                &mut meshes,
+                &mut materials,
+            )
+            .id(),
         );
     }
 
-    ControllableBall::spawn(
+    let player_ball = ControllableBall::spawn(
         Vec3::new(0.0, 0.0, 0.0),
-        &mut commands,
+        // commands,
+        parent,
         &mut meshes,
         &mut materials,
     );
+
+    BallGameScene {
+        trajectory: Trajectory::new(),
+        game_balls,
+        player_ball,
+        controller: ControllerType::AI { training: true },
+        // controller: ControllerType::Keyboard,
+    }
+    // how do add scene as a component to parent entity??
 }
 
+/// Resets balls back to random starting position
 pub fn reset_scene(
     mut param_set: ParamSet<(
         Query<(&mut Velocity, &mut Transform), With<Ball>>,

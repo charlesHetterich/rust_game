@@ -47,4 +47,7 @@ I've got the core functionality of the game set up here with a player ball meant
 
 Now we have the (untrained) AI model controling the player ball over several episodes
 ![Demo](./assets/progvid3.gif)
+### ---
 
+(still untrained) Its efficient to run train on batched trajectories, this allows for higher learning rates
+![Demo](./assets/progvid4.gif)

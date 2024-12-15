@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{ecs::system::EntityCommands, prelude::*};
 use bevy_rapier3d::prelude::*;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -38,44 +38,41 @@ pub struct Ball {
     pub class: BallTag,
 }
 impl Ball {
-    pub fn spawn(
+    pub fn spawn<'a>(
         radius: f32,
         position: Vec3,
         velocity: Vec3,
         tag: BallTag,
-        commands: &mut Commands,
-        meshes: &mut ResMut<Assets<Mesh>>,
-        materials: &mut ResMut<Assets<StandardMaterial>>,
-    ) -> Entity {
-        let entity = commands
-            .spawn((
-                // Rendering components
-                PbrBundle {
-                    mesh: meshes.add(Mesh::from(Sphere { radius: radius })),
-                    material: materials.add(StandardMaterial {
-                        base_color: tag.color(),
-                        ..Default::default()
-                    }),
-                    transform: Transform::from_translation(position),
+        parent: &'a mut ChildBuilder<'_>,
+        meshes: &'a mut ResMut<Assets<Mesh>>,
+        materials: &'a mut ResMut<Assets<StandardMaterial>>,
+    ) -> EntityCommands<'a> {
+        let entity = parent.spawn((
+            // Rendering components
+            PbrBundle {
+                mesh: meshes.add(Mesh::from(Sphere { radius: radius })),
+                material: materials.add(StandardMaterial {
+                    base_color: tag.color(),
                     ..Default::default()
-                },
-                // Physics components
-                Collider::ball(radius),
-                RigidBody::Dynamic,
-                Restitution {
-                    coefficient: if tag == BallTag::Player { 0.0 } else { 0.7 },
-                    combine_rule: CoefficientCombineRule::Average,
-                },
-                Velocity::linear(velocity),
-                LockedAxes::TRANSLATION_LOCKED_Y,
-                // Other
-                Ball {
-                    drag_coefficient: if tag == BallTag::Player { 0.1 } else { 0.01 },
-                    class: tag,
-                },
-            ))
-            .id();
-
+                }),
+                transform: Transform::from_translation(position),
+                ..Default::default()
+            },
+            // Physics components
+            Collider::ball(radius),
+            RigidBody::Dynamic,
+            Restitution {
+                coefficient: if tag == BallTag::Player { 0.0 } else { 0.7 },
+                combine_rule: CoefficientCombineRule::Average,
+            },
+            Velocity::linear(velocity),
+            LockedAxes::TRANSLATION_LOCKED_Y,
+            // Other
+            Ball {
+                drag_coefficient: if tag == BallTag::Player { 0.1 } else { 0.01 },
+                class: tag,
+            },
+        ));
         entity
     }
 
@@ -96,19 +93,20 @@ pub struct ControllableBall {}
 impl ControllableBall {
     pub fn spawn(
         position: Vec3,
-        commands: &mut Commands,
+        parent: &mut ChildBuilder,
         meshes: &mut ResMut<Assets<Mesh>>,
         materials: &mut ResMut<Assets<StandardMaterial>>,
-    ) {
-        let ball_entity = Ball::spawn(
+    ) -> Entity {
+        Ball::spawn(
             1.5,
             position,
             Vec3::ZERO,
             BallTag::Player,
-            commands,
+            parent,
             meshes,
             materials,
-        );
-        commands.entity(ball_entity).insert(ControllableBall {});
+        )
+        .insert(ControllableBall {})
+        .id()
     }
 }

@@ -5,19 +5,12 @@ use tch::*;
 
 use crate::features::ball::*;
 use crate::modeling::ModelResource;
-use crate::util::playdata::collect_ai_input;
+use crate::scenes::ball_game_scene::BallGameScene;
 
-/// Collects model input
-// fn collect_ai_input(ball_query: Query<(&Velocity, &Transform), With<Ball>>) -> Tensor {
-//     let mut inputs = Vec::new();
-//     for (ball_velocity, ball_transform) in ball_query.iter() {
-//         inputs.push(ball_velocity.linvel.x);
-//         inputs.push(ball_velocity.linvel.z);
-//         inputs.push(ball_transform.translation.x);
-//         inputs.push(ball_transform.translation.z);
-//     }
-//     Tensor::from_slice(&inputs).view([1, (50 + 1) * 4])
-// }
+pub enum ControllerType {
+    Keyboard,
+    AI { training: bool },
+}
 
 /// Human player input
 fn get_keyboard_input(keyboard_input: &Res<ButtonInput<KeyCode>>) -> (bool, bool, bool, bool) {
@@ -28,27 +21,22 @@ fn get_keyboard_input(keyboard_input: &Res<ButtonInput<KeyCode>>) -> (bool, bool
     (up, down, left, right)
 }
 
-/// AI player input
-fn get_ai_movement(model: &TrainableCModule, input: Tensor) -> (bool, bool, bool, bool) {
+/// Gets movement actions from model over a batch of states
+fn get_ai_movement(model: &TrainableCModule, s: Tensor) -> Vec<(bool, bool, bool, bool)> {
     // Run model
-    let output = model.forward_t(&input, false);
-    let output = output.sigmoid();
+    let a_next = model
+        .forward_t(&s, false)
+        .sigmoid()
+        .to_device(Device::Cpu)
+        .to_kind(Kind::Float)
+        .gt(0.5);
 
-    // Extract outputs
-    let output_values = Vec::<f32>::try_from(
-        output
-            .view([-1])
-            .to_device(Device::Cpu)
-            .to_kind(Kind::Float),
-    )
-    .unwrap();
-    let up = output_values[0] > 0.5;
-    let down = output_values[1] > 0.5;
-    let left = output_values[2] > 0.5;
-    let right = output_values[3] > 0.5;
-
-    // Return
-    (up, down, left, right)
+    // extract output & return
+    Vec::<Vec<bool>>::try_from(a_next)
+        .unwrap()
+        .iter()
+        .map(|x| (x[0], x[1], x[2], x[3]))
+        .collect::<Vec<(bool, bool, bool, bool)>>()
 }
 
 const PLAYER_SPEED: f32 = 250.0;
@@ -73,33 +61,66 @@ fn apply_movement(
     velocity.linvel += direction * time.delta_seconds();
 }
 
-/// Keyboard-based player movement
-pub fn move_player_w_human(
-    time: Res<Time>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut query: Query<(&mut Velocity, &mut Transform), With<ControllableBall>>,
-) {
-    if let Ok((mut velocity, _)) = query.get_single_mut() {
-        let (up, down, left, right) = get_keyboard_input(&keyboard_input);
-        apply_movement(up, down, left, right, &mut velocity, &time);
+// collect AI input
+fn push(velocity: &Velocity, transform: &Transform, target_quadrant: Option<(i8, i8)>) -> Vec<f32> {
+    let mut inputs = Vec::new();
+    inputs.push(velocity.linvel.x);
+    inputs.push(velocity.linvel.z);
+    inputs.push(transform.translation.x);
+    inputs.push(transform.translation.z);
+    if let Some((v1, v2)) = target_quadrant {
+        inputs.append(&mut vec![v1 as f32, v2 as f32]);
     }
+    inputs
 }
-
-/// AI-based player movement
-pub fn move_player_w_ai(
-    time: Res<Time>,
+pub fn move_balls(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
     model_resource: Res<ModelResource>,
-    mut ball_pset: ParamSet<(
-        Query<&mut Velocity, With<ControllableBall>>,
-        Query<(&Velocity, &Transform, &Ball), With<Ball>>,
-    )>,
+    scene_query: Query<&BallGameScene>,
+    balls_query: Query<(&Velocity, &Transform, &Ball), Without<ControllableBall>>,
+    mut pball_query: Query<(&mut Velocity, &Transform), With<ControllableBall>>,
+    time: Res<Time>,
 ) {
-    // Collect input
-    let (up, down, left, right) = get_ai_movement(
-        &model_resource.model,
-        collect_ai_input(ball_pset.p1().iter().collect()),
+    // collect model input filtered for AI controlled scenes
+    let batch_states = Tensor::cat(
+        &(scene_query
+            .iter()
+            .filter_map(|scene| match &scene.controller {
+                ControllerType::Keyboard => None,
+                ControllerType::AI { training: _ } => {
+                    let (p_velocity, p_transform) = pball_query.get_mut(scene.player_ball).unwrap();
+                    let mut inputs = Vec::new();
+                    inputs.append(&mut push(&*p_velocity, p_transform, None));
+                    for (velocity, transform, ball) in balls_query.iter_many(&scene.game_balls) {
+                        inputs.append(&mut push(velocity, transform, ball.class.target_quadrant()));
+                    }
+                    Some(Tensor::from_slice(&inputs).view([1, (50 + 1) * 6 - 2]))
+                }
+            })
+            .collect::<Vec<Tensor>>()),
+        0,
     );
-    if let Ok(mut velocity) = ball_pset.p0().get_single_mut() {
-        apply_movement(up, down, left, right, &mut velocity, &time);
+
+    // run model and apply movements
+    let batch_actions: Vec<(bool, bool, bool, bool)> =
+        get_ai_movement(&model_resource.model, batch_states);
+    let mut i = 0;
+    for scene in scene_query.iter() {
+        let (mut p_velocity, _) = pball_query.get_mut(scene.player_ball).unwrap();
+        let action = match &scene.controller {
+            ControllerType::Keyboard => get_keyboard_input(&keyboard_input),
+            ControllerType::AI { training: _ } => {
+                i += 1;
+                batch_actions[i - 1]
+            }
+        };
+        apply_movement(
+            action.0,
+            action.1,
+            action.2,
+            action.3,
+            &mut p_velocity,
+            &time,
+        );
     }
 }

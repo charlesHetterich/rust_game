@@ -6,6 +6,11 @@ use bevy_rapier3d::prelude::*;
 use crate::features::ball::*;
 use crate::scenes::ball_game_scene::reset_scene;
 
+#[derive(Resource)]
+pub struct Settings {
+    pub debug_mode: bool,
+}
+
 #[derive(Component)]
 pub struct CameraController;
 
@@ -23,6 +28,7 @@ pub fn cursor_toggle_grab(cursor: &mut Cursor) {
 }
 
 pub fn apply_system_inputs(
+    time: Res<Time>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mouse_motion_events: EventReader<MouseMotion>,
     mut q_windows: Query<&mut Window, With<PrimaryWindow>>,
@@ -56,21 +62,24 @@ pub fn apply_system_inputs(
             &keyboard_input,
             mouse_motion_events,
             (&mut param_set.p0()).single_mut(),
+            time,
         );
     }
 }
 
-fn toggle_debug_render(
+pub fn toggle_debug_render(
     // mut commands: Commands,
     mut debug_render_state: ResMut<DebugRenderContext>,
 ) {
     debug_render_state.enabled = !debug_render_state.enabled;
 }
 
+const CAMERA_SPEED: f32 = 30.0;
 fn move_camera(
     keyboard_input: &Res<ButtonInput<KeyCode>>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut camera_transform: Mut<'_, Transform>,
+    time: Res<Time>,
 ) {
     let transform = &mut camera_transform;
     let forward = Vec3::new(transform.forward().x, 0.0, transform.forward().z).normalize();
@@ -78,26 +87,32 @@ fn move_camera(
     let up = Vec3::Y;
 
     // WASD
+    let mut direction = Vec3::ZERO;
     if keyboard_input.pressed(KeyCode::KeyW) {
-        transform.translation += forward * 0.1;
+        direction += forward;
     }
     if keyboard_input.pressed(KeyCode::KeyS) {
-        transform.translation -= forward * 0.1;
+        direction -= forward;
     }
     if keyboard_input.pressed(KeyCode::KeyA) {
-        transform.translation -= right * 0.1;
+        direction -= right;
     }
     if keyboard_input.pressed(KeyCode::KeyD) {
-        transform.translation += right * 0.1;
+        direction += right;
     }
 
     // SHIFT/SPACE |    up/down
     if keyboard_input.pressed(KeyCode::ShiftLeft) {
-        transform.translation -= up * 0.1;
+        direction -= up;
     }
     if keyboard_input.pressed(KeyCode::Space) {
-        transform.translation += up * 0.1;
+        direction += up;
     }
+
+    if direction.length_squared() > 0.0 {
+        direction = direction.normalize() * CAMERA_SPEED;
+    }
+    transform.translation += direction * time.delta_seconds();
 
     // MOUSE MOTION |   rotate camera
     for event in mouse_motion_events.read() {

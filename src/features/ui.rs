@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use bevy_rapier3d::render::DebugRenderContext;
 
 use crate::features::system::*;
+use crate::features::system_controls::toggle_debug_render;
 
 pub fn setup_graphics(mut commands: Commands) {
     commands.spawn((
@@ -14,8 +16,12 @@ pub fn setup_graphics(mut commands: Commands) {
     ));
 }
 
-pub fn start_cursor_toggle_grab(mut q_windows: Query<&mut Window, With<PrimaryWindow>>) {
+pub fn start_cursor_toggle_grab(
+    mut q_windows: Query<&mut Window, With<PrimaryWindow>>,
+    debug_render_state: ResMut<DebugRenderContext>,
+) {
     cursor_toggle_grab(&mut q_windows.single_mut().cursor);
+    toggle_debug_render(debug_render_state);
 }
 
 pub fn setup_ui(mut commands: Commands) {

@@ -12,6 +12,15 @@ pub struct Trajectory {
 // * i think we do `unsafe` thing bc
 // * tensors are C and not rust compliant ?
 unsafe impl Sync for Trajectory {}
+impl Trajectory {
+    pub fn new() -> Self {
+        Trajectory {
+            state: Vec::new(),
+            action: Vec::new(),
+            reward: Vec::new(),
+        }
+    }
+}
 
 #[derive(Resource)]
 pub struct ModelResource {
